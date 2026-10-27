@@ -7,6 +7,17 @@
 
 macOS system monitor in your menu bar
 
+## Desktop video
+
+This fork can loop a video behind the desktop icons while you work. Open Stats settings and use **桌面动态**.
+
+- **办公时一直动** shows the video. Turning it off restores the normal wallpaper.
+- The shortcut pauses on the current frame. Press it again to continue. It does not remove the video.
+- The lock screen and display sleep pause decoding and keep the window. Playback resumes after wake, unless the shortcut was used to pause.
+- Clicks pass through to Finder. A 4K loop uses extra CPU and battery.
+- Quit `桌面动态.app` before turning this on. The two players are not meant to run together.
+- Updates come from this fork (`maplesolo/stats`), not from the official Stats release.
+
 ## Installation
 ### Manual
 You can download the latest version [here](https://github.com/exelban/stats/releases/latest/download/Stats.dmg).

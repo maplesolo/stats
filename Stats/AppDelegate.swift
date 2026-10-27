@@ -22,7 +22,8 @@ import Bluetooth
 import Clock
 import Remote
 
-let updater = Updater(github: "exelban/stats", url: "https://api.mac-stats.com/release/latest")
+// This fork plays a desktop video. Official updates would replace that build.
+let updater = Updater(github: "maplesolo/stats", url: "https://api.github.com/repos/maplesolo/stats/releases/latest")
 var modules: [Module] = [
     CPU(),
     GPU(),
@@ -100,9 +101,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         
         info("Stats started in \((startingPoint.timeIntervalSinceNow * -1).rounded(toPlaces: 4)) seconds")
         self.startTS = Date()
+        DesktopWallpaper.shared.start()
     }
     
     func applicationWillTerminate(_ aNotification: Notification) {
+        DesktopWallpaper.shared.stop()
         modules.forEach{ $0.terminate() }
         DB.shared.flush()
         SystemStats.shared.terminate()
