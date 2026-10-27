@@ -83,10 +83,9 @@ class ApplicationSettings: NSStackView {
     
     private var planField: NSTextField?
     private var desktopSwitch: NSSwitch?
-    private var desktopSceneRow: PreferencesRow?
+    private var desktopWallpaperField: NSTextField?
     private var desktopShortcutButton: ShortcutCaptureButton?
     private var desktopStatusField: NSTextField?
-    private var desktopSceneSignature = ""
     
     init() {
         super.init(frame: NSRect(x: 0, y: 0, width: Constants.Settings.width, height: Constants.Settings.height))
@@ -147,19 +146,20 @@ class ApplicationSettings: NSStackView {
         self.desktopStatusField?.font = NSFont.systemFont(ofSize: 12, weight: .regular)
         self.desktopStatusField?.textColor = .secondaryLabelColor
         self.desktopStatusField?.lineBreakMode = .byTruncatingTail
-        self.desktopSceneRow = PreferencesRow(localizedString("画面"), component: self.desktopScenePopup())
-        self.desktopSceneSignature = self.currentDesktopSceneSignature()
+        self.desktopWallpaperField = TextView()
+        self.desktopWallpaperField?.font = NSFont.systemFont(ofSize: 12, weight: .regular)
+        self.desktopWallpaperField?.lineBreakMode = .byTruncatingTail
         scrollView.stackView.addArrangedSubview(PreferencesSection(title: "桌面动态", [
             PreferencesRow(
                 "办公时一直动",
-                "关掉才回到原来的壁纸。4K 循环会多用一些处理器和电量。",
+                "循环系统设置里的那套墙纸，不再另外加载一段。关掉才回到原来的画面。",
                 component: self.desktopSwitch!
             ),
-            self.desktopSceneRow!,
-            PreferencesRow("其他视频", component: buttonView(
-                #selector(self.chooseDesktopVideo),
-                text: "选择…"
-            )),
+            PreferencesRow(
+                "画面",
+                "和系统设置 > 墙纸是同一套。",
+                component: self.desktopWallpaperField!
+            ),
             PreferencesRow(
                 "暂停快捷键",
                 "只停在当前画面，再按一次继续。需要 ⌘、⌥、⌃ 或 ⇧。",
@@ -377,44 +377,18 @@ class ApplicationSettings: NSStackView {
         DesktopWallpaper.shared.setEnabled(sender.state == .on)
     }
     
-    @objc private func toggleDesktopScene(_ sender: NSMenuItem) {
-        guard let key = sender.representedObject as? String else { return }
-        DesktopWallpaper.shared.setScene(key)
-    }
-    
-    @objc private func chooseDesktopVideo() {
-        DesktopWallpaper.shared.chooseVideo()
-    }
-    
     @objc private func clearDesktopShortcut() {
         DesktopWallpaper.shared.setShortcut(nil)
-    }
-    
-    private func desktopScenePopup() -> NSPopUpButton {
-        let model = DesktopWallpaper.shared
-        return selectView(
-            action: #selector(self.toggleDesktopScene),
-            items: model.scenes.map { KeyValue_t(key: $0.id, value: $0.name) },
-            selected: model.sceneID
-        )
-    }
-    
-    private func currentDesktopSceneSignature() -> String {
-        let model = DesktopWallpaper.shared
-        return model.scenes.map(\.id).joined(separator: "|") + "#" + model.sceneID
     }
     
     private func refreshDesktopControls() {
         let model = DesktopWallpaper.shared
         self.desktopSwitch?.state = model.enabled ? .on : .off
+        self.desktopWallpaperField?.stringValue = model.wallpaperName
+        self.desktopWallpaperField?.toolTip = model.wallpaperName
         self.desktopStatusField?.stringValue = model.status
         self.desktopStatusField?.toolTip = model.status
         self.desktopShortcutButton?.show(model.shortcut)
-        let signature = self.currentDesktopSceneSignature()
-        if signature != self.desktopSceneSignature, let row = self.desktopSceneRow {
-            self.desktopSceneSignature = signature
-            row.replaceComponent(with: self.desktopScenePopup())
-        }
     }
     
     @objc private func updateAction() {

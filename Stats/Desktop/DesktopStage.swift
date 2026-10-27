@@ -13,6 +13,7 @@ final class DesktopStage {
     private var sleepObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var wantsPlayback = false
+    private var playingURL: URL?
     private var userPaused = false
     private var displaySleeping = false
     private var screenLocked = false
@@ -62,8 +63,14 @@ final class DesktopStage {
     }
 
     func play(url: URL) {
+        if wantsPlayback, playingURL == url, !windows.isEmpty {
+            userPaused = false
+            syncPlayback()
+            return
+        }
         wantsPlayback = true
         userPaused = false
+        playingURL = url
         let item = AVPlayerItem(url: url)
         if let screen = NSScreen.main {
             let scale = screen.backingScaleFactor
@@ -84,6 +91,7 @@ final class DesktopStage {
     func stop() {
         wantsPlayback = false
         userPaused = false
+        playingURL = nil
         syncPlayback()
         windows.forEach {
             ($0.contentView as? PlayerHostView)?.playerLayer.player = nil

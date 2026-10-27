@@ -1,6 +1,5 @@
 import AppKit
 import Kit
-import UniformTypeIdentifiers
 
 /// Desktop video owned by the Stats app. This is separate from the Stats
 /// menu-bar pause (`Store` key "pause"), which only hides modules.
@@ -11,24 +10,22 @@ final class DesktopWallpaper {
 
     private enum Key {
         static let enabled = "desktop_enabled"
-        static let scene = "desktop_scene"
         static let shortcut = "desktop_shortcut"
-        static let custom = "desktop_custom"
     }
 
     private let stage = DesktopStage()
-    private var customPaths: [String] = []
     private var started = false
     private var blockedByOtherApp = false
     private var waitingForToggle = false
     private var playbackError: String?
     private var shortcutError: String?
     private var observers: [NSObjectProtocol] = []
+    private var wallpaperSource: DispatchSourceFileSystemObject?
+    private var playingID: String?
 
     private(set) var enabled = false
     private(set) var paused = false
-    private(set) var sceneID = ""
-    private(set) var scenes: [AerialScene] = []
+    private(set) var wallpaperName = "系统设置里的墙纸"
     private(set) var shortcut: DesktopShortcut?
     private(set) var status = "已关闭，桌面是原来的壁纸"
 
@@ -40,7 +37,8 @@ final class DesktopWallpaper {
         guard !started else { return }
         started = true
         loadSettings()
-        reloadScenes()
+        refreshWallpaperName()
+        watchSystemWallpaper()
         stage.onPlaybackError = { [weak self] message in
             self?.playbackError = message
             self?.refreshStatus()
@@ -81,18 +79,6 @@ final class DesktopWallpaper {
         apply()
     }
 
-    func setScene(_ id: String) {
-        sceneID = id
-        Store.shared.set(key: Key.scene, value: id)
-        waitingForToggle = false
-        guard enabled else {
-            refreshStatus()
-            publish()
-            return
-        }
-        apply()
-    }
-
     func setShortcut(_ value: DesktopShortcut?) {
         shortcut = value
         if let value, let data = try? JSONEncoder().encode(value) {
@@ -103,31 +89,6 @@ final class DesktopWallpaper {
         registerHotKeyIfPlaying()
         refreshStatus()
         publish()
-    }
-
-    func chooseVideo() {
-        let panel = NSOpenPanel()
-        panel.title = "选择循环播放的视频"
-        panel.allowedContentTypes = [.movie, .mpeg4Movie, .quickTimeMovie]
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        if !customPaths.contains(url.path) {
-            customPaths.append(url.path)
-            Store.shared.set(key: Key.custom, value: customPaths)
-        }
-        reloadScenes()
-        sceneID = "file:" + url.path
-        Store.shared.set(key: Key.scene, value: sceneID)
-        waitingForToggle = false
-        if enabled {
-            apply()
-        } else {
-            refreshStatus()
-            publish()
-        }
     }
 
     func suspendHotKey() {
@@ -186,17 +147,21 @@ final class DesktopWallpaper {
             publish()
             return
         }
-        guard let scene = scenes.first(where: { $0.id == sceneID }) else {
+        guard let scene = AerialLibrary.systemWallpaper() else {
             paused = false
-            playbackError = "没有可播放的视频"
+            playbackError = "系统设置里的墙纸不是已下载的动态航拍"
+            playingID = nil
             stage.stop()
             _ = HotKeyCenter.update(nil)
+            refreshWallpaperName()
             refreshStatus()
             publish()
             return
         }
+        refreshWallpaperName()
         playbackError = nil
         paused = false
+        playingID = scene.id
         shortcutError = HotKeyCenter.update(shortcut)
         stage.play(url: scene.url)
         refreshStatus()
@@ -211,7 +176,7 @@ final class DesktopWallpaper {
     }
 
     private var stageIsPlaying: Bool {
-        enabled && !blockedByOtherApp && !waitingForToggle && scenes.contains(where: { $0.id == sceneID })
+        enabled && !blockedByOtherApp && !waitingForToggle && AerialLibrary.systemWallpaper() != nil
     }
 
     private var liveDesktopIsRunning: Bool {
@@ -222,8 +187,6 @@ final class DesktopWallpaper {
         let store = Store.shared
         if store.exist(key: Key.enabled) {
             enabled = store.bool(key: Key.enabled, defaultValue: false)
-            sceneID = store.string(key: Key.scene, defaultValue: "")
-            customPaths = store.array(key: Key.custom, defaultValue: []).compactMap { $0 as? String }
             if let data = store.data(key: Key.shortcut) {
                 shortcut = try? JSONDecoder().decode(DesktopShortcut.self, from: data)
             }
@@ -232,31 +195,47 @@ final class DesktopWallpaper {
 
         let domain = UserDefaults.standard.persistentDomain(forName: Self.liveDesktopBundleID) ?? [:]
         enabled = Self.bool(domain["enabled"]) ?? false
-        sceneID = domain["sceneID"] as? String ?? ""
-        if let paths = domain["customPaths"] as? [String] {
-            customPaths = paths
-        }
         store.set(key: Key.enabled, value: enabled)
-        if !sceneID.isEmpty {
-            store.set(key: Key.scene, value: sceneID)
-        }
-        if !customPaths.isEmpty {
-            store.set(key: Key.custom, value: customPaths)
-        }
         if let data = domain["shortcut"] as? Data {
             shortcut = try? JSONDecoder().decode(DesktopShortcut.self, from: data)
             store.set(key: Key.shortcut, value: data)
         }
     }
 
-    private func reloadScenes() {
-        scenes = AerialLibrary.load(customPaths: customPaths)
-        if scenes.contains(where: { $0.id == sceneID }) { return }
-        if scenes.contains(where: { $0.id == AerialLibrary.preferredID }) {
-            sceneID = AerialLibrary.preferredID
-        } else {
-            sceneID = scenes.first?.id ?? ""
+    private func watchSystemWallpaper() {
+        let directory = AerialLibrary.wallpaperIndexURL.deletingLastPathComponent()
+        let fd = open(directory.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: .write,
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                self?.systemWallpaperChanged()
+            }
         }
+        source.setCancelHandler {
+            close(fd)
+        }
+        wallpaperSource = source
+        source.resume()
+    }
+
+    private func systemWallpaperChanged() {
+        let scene = AerialLibrary.systemWallpaper()
+        refreshWallpaperName()
+        guard enabled, !blockedByOtherApp, !waitingForToggle else {
+            publish()
+            return
+        }
+        guard scene?.id != playingID else { return }
+        apply()
+    }
+
+    private func refreshWallpaperName() {
+        wallpaperName = AerialLibrary.systemWallpaper()?.name ?? "系统设置里的墙纸不是动态航拍"
     }
 
     private func refreshStatus() {
@@ -272,10 +251,10 @@ final class DesktopWallpaper {
             status = playbackError
         } else if paused {
             status = "已暂停在当前画面"
-        } else if !scenes.contains(where: { $0.id == sceneID }) {
-            status = "没有可播放的视频"
+        } else if AerialLibrary.systemWallpaper() == nil {
+            status = "系统设置里的墙纸不是已下载的动态航拍"
         } else {
-            status = "正在播放。快捷键只暂停当前画面"
+            status = "正在循环系统墙纸。快捷键只暂停当前画面"
         }
     }
 
